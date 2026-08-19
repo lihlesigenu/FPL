@@ -1,0 +1,108 @@
+---
+title: "Loading Data"
+author: "Lihle Sigenu"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: libs
+
+install.packages(c("httr", "jsonlite", "dplyr", "purrr", "tidyr"))
+library(httr)
+library(jsonlite)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+#| label: pull function
+
+get_fpl <- function(endpoint) {
+  url <- paste0("https://fantasy.premierleague.com/api/", endpoint)
+  res <- GET(url, user_agent("Mozilla/5.0"))  # some setups need a UA header
+  stop_for_status(res)
+  fromJSON(content(res, "text", encoding = "UTF-8"))
+}
+```
+
+```{r}
+#| label: players data
+
+############## GENERAL INFORMATION ###########
+bootstrap = get_fpl("bootstrap-static/")
+players = bootstrap$elements
+
+players_df <- players %>%
+  select(
+    id, first_name, second_name, web_name, team, element_type,
+    now_cost, points_per_game, transfers_in, transfers_out,
+    minutes, goals_scored, assists, clean_sheets, goals_conceded,
+    own_goals, penalties_saved, penalties_missed, yellow_cards, red_cards,
+    saves, bonus, bps, influence, creativity, threat, ict_index,
+    clearances_blocks_interceptions, recoveries, tackles,
+    defensive_contribution, starts,
+    expected_goals, expected_assists, expected_goal_involvements,
+    expected_goals_conceded,
+    expected_goals_per_90, expected_assists_per_90,
+    expected_goal_involvements_per_90, expected_goals_conceded_per_90,
+    saves_per_90, goals_conceded_per_90, starts_per_90, clean_sheets_per_90,
+    defensive_contribution_per_90,
+    influence_rank, creativity_rank, threat)
+
+players_df <- players_df %>%
+  mutate(across(
+    c(expected_goals, expected_assists, expected_goal_involvements,
+      expected_goals_conceded, influence, creativity, threat, ict_index,
+      expected_goals_per_90, expected_assists_per_90,
+      expected_goal_involvements_per_90, expected_goals_conceded_per_90,
+      saves_per_90, goals_conceded_per_90, starts_per_90, clean_sheets_per_90,
+      defensive_contribution_per_90),
+    as.numeric
+  ))
+
+# JOIN POSITIONS AND TEAM
+teams     <- bootstrap$teams
+positions <- bootstrap$element_types
+
+
+players_df <- players_df %>%
+  left_join(teams %>% select(id, team_name = name, team_short = short_name), 
+            by = c("team" = "id")) %>%
+  left_join(positions %>% select(id, position = singular_name, position_short = singular_name_short), 
+            by = c("element_type" = "id")) %>%
+  relocate(team_name, team_short, position, position_short, .after = second_name)
+```
+
+```{r}
+############## FIXTURES ###########
+fixtures = get_fpl("fixtures/")
+
+############## FIXTURES BY GAMEWEEK ###########
+bootstrap = get_fpl("bootstrap-static/")
+
+############## DATA ON PLAYERS ###########
+players = get_fpl("element-summary/")
+```
+
+# FORWARDS
+
+```{r}
+forwards = players_df %>% 
+  filter(position_short == "FWD")
+
+ggplot(data = forwards, aes(x = now_cost, y = points_per_game, label = web_name)) +
+  geom_point() +
+  geom_text(size = 3)
+```
+
+# MIDFIELDERS
+
+```{r}
+midfielders = players_df %>% 
+  filter(position_short == "MID", points_per_game > 3.5)
+
+ggplot(data = midfielders, aes(x = now_cost, y = points_per_game, label = web_name)) +
+  geom_point() +
+  geom_text(size = 3)
+```
