@@ -100,9 +100,28 @@ ggplot(data = forwards, aes(x = now_cost, y = points_per_game, label = web_name)
 
 ```{r}
 midfielders = players_df %>% 
-  filter(position_short == "MID", points_per_game > 3.5)
+  filter(position_short == "MID")
 
 ggplot(data = midfielders, aes(x = now_cost, y = points_per_game, label = web_name)) +
-  geom_point() +
+  geom_text(size = 3)
+```
+
+# DEFENDERS
+
+```{r}
+defenders = players_df %>% 
+  filter(position_short == "DEF") 
+
+ggplot(data = defenders, aes(x = now_cost, y = points_per_game, label = web_name)) +
+  geom_text(size = 3)
+```
+
+# GOALKEEPER
+
+```{r}
+goalkeeper = players_df %>% 
+  filter(position_short == "GKP") 
+
+ggplot(data = goalkeeper, aes(x = now_cost, y = points_per_game, label = web_name)) +
   geom_text(size = 3)
 ```
