@@ -13,6 +13,7 @@ library(httr)
 library(jsonlite)
 library(dplyr)
 library(ggplot2)
+library(ggrepel)
 ```
 
 ```{r}
@@ -36,7 +37,7 @@ players = bootstrap$elements
 players_df <- players %>%
   select(
     id, first_name, second_name, web_name, team, element_type,
-    now_cost, points_per_game, transfers_in, transfers_out,
+    now_cost,total_points,  points_per_game, transfers_in, transfers_out,
     minutes, goals_scored, assists, clean_sheets, goals_conceded,
     own_goals, penalties_saved, penalties_missed, yellow_cards, red_cards,
     saves, bonus, bps, influence, creativity, threat, ict_index,
@@ -77,7 +78,55 @@ players_df <- players_df %>%
 ```{r}
 ############## FIXTURES ###########
 fixtures = get_fpl("fixtures/")
+events   <- bootstrap$events
 
+current_gw <- events %>% filter(is_current == TRUE) %>% pull(id)
+# if between gameweeks / preseason, fall back to next one
+if (length(current_gw) == 0) current_gw <- events %>% filter(is_next == TRUE) %>% pull(id)
+
+fixtures_long <- bind_rows(
+  fixtures %>%
+    transmute(event, team = team_h, opponent = team_a,
+              difficulty = team_h_difficulty, is_home = TRUE),
+  fixtures %>%
+    transmute(event, team = team_a, opponent = team_h,
+              difficulty = team_a_difficulty, is_home = FALSE)
+) %>%
+  left_join(teams %>% select(id, opponent_name = name), by = c("opponent" = "id")) %>%
+  filter(!is.na(event)) %>%   # drops fixtures not yet scheduled to a GW
+  arrange(team, event)
+
+next5 <- fixtures_long %>%
+  filter(event >= current_gw, event < current_gw + 5) %>%
+  group_by(team) %>%
+  summarise(
+    fdr_next5 = round(mean(difficulty), 2),
+    fixtures_next5 = paste0(opponent_name, " (", ifelse(is_home, "H", "A"), ")", collapse = ", "),
+    .groups = "drop"
+  )
+
+next10 <- fixtures_long %>%
+  filter(event >= current_gw, event < current_gw + 10) %>%
+  group_by(team) %>%
+  summarise(
+    fdr_next10 = round(mean(difficulty), 2),
+    fixtures_next10 = paste0(opponent_name, " (", ifelse(is_home, "H", "A"), ")", collapse = ", "),
+    .groups = "drop"
+  )
+
+players_df <- players_df %>%
+  left_join(next5, by = "team") %>%
+  left_join(next10, by = "team")
+```
+
+# ALL-INDEX
+
+```{r}
+players_df = players_df %>% 
+  mutate(allindex = scale(total_points) * scale(minutes) * scale(now_cost) * scale(ict_index))
+```
+
+```{r}
 ############## FIXTURES BY GAMEWEEK ###########
 bootstrap = get_fpl("bootstrap-static/")
 
@@ -89,31 +138,78 @@ players = get_fpl("element-summary/")
 
 ```{r}
 forwards = players_df %>% 
-  filter(position_short == "FWD")
+  filter(position_short == "FWD", web_name != "Haaland") %>% 
+  select(web_name, total_points,minutes, goals_scored,expected_goals,assists, expected_assists,yellow_cards,bonus,ict_index, now_cost, fdr_next5, fdr_next10)
 
-ggplot(data = forwards, aes(x = now_cost, y = points_per_game, label = web_name)) +
+forwards_df = forwards %>% select(-web_name) %>% scale() %>% as.data.frame()
+fwd_lm = lm(total_points ~ minutes + expected_goals + expected_assists + yellow_cards, data = forwards_df)
+
+forwards$quality_score <- predict(fwd_lm)
+
+forwards = forwards %>% 
+  filter(quality_score > 0)
+ggplot(data = forwards, aes(x = fdr_next10, y = quality_score, label = web_name, colour = now_cost, size = minutes)) +
   geom_point() +
-  geom_text(size = 3)
+  geom_text_repel(size = 3) +
+  scale_colour_gradient(low = "green", high = "red") +
+  labs(
+    x = "Fixture Difficulty (Next 5 GWs)",
+    y = "Quality Score",
+    colour = "Price (£0.1m)",
+    title = "Forwards: Fixture Difficulty vs Quality Score"
+  )
 ```
 
 # MIDFIELDERS
 
 ```{r}
 midfielders = players_df %>% 
-  filter(position_short == "MID")
+  filter(position_short == "MID") %>% 
+  select(web_name, total_points, minutes, goals_scored, expected_goals,assists, expected_assists,defensive_contribution,goals_conceded ,expected_goals_conceded, ,yellow_cards, now_cost, fdr_next5, fdr_next10)
 
-ggplot(data = midfielders, aes(x = now_cost, y = points_per_game, label = web_name)) +
-  geom_text(size = 3)
+mids_df = midfielders %>% select(-web_name) %>% scale() %>% as.data.frame()
+mid_lm = lm(total_points ~ minutes + expected_goals + expected_assists + defensive_contribution + expected_goals_conceded, data = mids_df)
+
+midfielders$quality_score <- predict(mid_lm)
+
+midfielders = midfielders %>% 
+  filter(quality_score > 0)
+ggplot(data = midfielders, aes(x = fdr_next10, y = quality_score, label = web_name, colour = now_cost, size = minutes)) +
+  geom_point() +
+  geom_text_repel(size = 3) +
+  scale_colour_gradient(low = "green", high = "red") +
+  labs(
+    x = "Fixture Difficulty (Next 5 GWs)",
+    y = "Quality Score",
+    colour = "Price (£0.1m)",
+    title = "Forwards: Fixture Difficulty vs Quality Score"
+  )
 ```
 
 # DEFENDERS
 
 ```{r}
 defenders = players_df %>% 
-  filter(position_short == "DEF") 
+  filter(position_short == "DEF")  %>% 
+  select(web_name, total_points, minutes, goals_scored, expected_goals,assists, expected_assists,defensive_contribution,goals_conceded ,expected_goals_conceded, ,yellow_cards, now_cost, fdr_next5, fdr_next10)
 
-ggplot(data = defenders, aes(x = now_cost, y = points_per_game, label = web_name)) +
-  geom_text(size = 3)
+def_df = defenders %>% select(-web_name) %>% scale() %>% as.data.frame()
+def_lm = lm(total_points ~ minutes + expected_goals + expected_assists + defensive_contribution + expected_goals_conceded, data = def_df)
+
+defenders$quality_score <- predict(def_lm)
+
+defenders = defenders %>% 
+  filter(quality_score > 0)
+ggplot(data = defenders, aes(x = fdr_next10, y = quality_score, label = web_name, colour = now_cost, size = minutes)) +
+  geom_point() +
+  geom_text_repel(size = 3) +
+  scale_colour_gradient(low = "green", high = "red") +
+  labs(
+    x = "Fixture Difficulty (Next 5 GWs)",
+    y = "Quality Score",
+    colour = "Price (£0.1m)",
+    title = "Forwards: Fixture Difficulty vs Quality Score"
+  )
 ```
 
 # GOALKEEPER
